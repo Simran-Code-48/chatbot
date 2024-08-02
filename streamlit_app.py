@@ -1,56 +1,91 @@
 import streamlit as st
-from openai import OpenAI
+import pandas as pd
+import google.generativeai as genai
+import time
+import psycopg2
+from psycopg2 import OperationalError
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+# Access API KEY
+genai.configure(api_key=st.secrets.API_KEY)
+# Select a model
+model = genai.GenerativeModel('gemini-1.5-flash')
+# Define your connection string
+conn_string = st.secrets["conn_string"]
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# Establish a connection to the PostgreSQL database
+def get_connection():
+    try:
+        conn = psycopg2.connect(conn_string)
+        st.write("connection established")
+        return conn
+    except OperationalError as e:
+        st.error(f"Could not connect to the database: {e}")
+        return None
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+conn = get_connection()
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+# Insert data into the table
+def insert_data(package_id, app_name, female_centric):
+    conn = get_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO app_classifications (packageId, appName, femaleCentric)
+                VALUES (%s, %s, %s)
+            ''', (package_id, app_name, female_centric))
+            conn.commit()
+            cursor.close()
+            st.success("Changes saved successfully!")
+        except Exception as e:
+            st.error(f"Error inserting data: {e}")
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+# -----------------
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+# if conn:
+st.title("📄 App Classifier")
+st.write("Upload a document containing data you want to classify.")
+uploaded_file = st.file_uploader("Upload a document (.csv)", type=("csv"))
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+if uploaded_file is not None:
+    # Read CSV file
+    df = pd.read_csv(uploaded_file)
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
+    for column in df.columns:
+        if df[column].dtype == 'object':
+            df[column] = df[column].astype(str)
+    
+    if st.button("Submit"):
+        # responses
+        responses = []
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        for index, row in df.iterrows():
+            # st.write(f"Row index: {index}")
+            prompt = (
+                "Below is the data of an app. Based on this data, classify whether the app is female-centric, meaning it is primarily focused on female customers or the main consumers are females. Use provided data. Even if some data might be ambiguous or general, please make a reasoned assumption based on the descriptions and categories. Return the response as true or false only where true respresents female centric and false if not female centric \n"
+                "\nData : {"
+                f"\n\npackageId : {row['packageId']} ,"
+                f"\n\ncategory : {row['category']} ,"
+                f"\n\ndescription : {row['description']}" 
+                "\n\n}"               
+            )
+            # st.write(prompt)
+            # Send prompt to AI model
+            response = model.generate_content(prompt)
+            is_female_centric = "False"
+            if "true" in response.text.lower():
+                is_female_centric = "True"
+            if "false" in response.text.lower():
+                is_female_centric = "False"
+            # insert_data(row['packageId'], row['appName'], is_female_centric)
+            st.write("AI Model Response for chunk starting at row", index)
+            st.write("Package ID : ",row['packageId'])
+            st.write(row['appName'])
+            # st.write(row['packageId'])
+            st.write(response.text)
+            if "true" in response.text.lower():
+                st.write("Female centric")
+            if "false" in response.text.lower():
+                st.write("Non Female centric")
+            st.write("-----------------------------------------------------------------")
+            time.sleep(4)
