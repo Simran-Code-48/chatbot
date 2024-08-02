@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import time
-# import psycopg2
-# from psycopg2 import OperationalError
+import psycopg2
+from psycopg2 import OperationalError
 
 # Access API KEY
 genai.configure(api_key=st.secrets.API_KEY)
@@ -13,16 +13,16 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 conn_string = st.secrets["conn_string"]
 
 # Establish a connection to the PostgreSQL database
-# def get_connection():
-#     try:
-#         conn = psycopg2.connect(conn_string)
-#         st.write("connection established")
-#         return conn
-#     except OperationalError as e:
-#         st.error(f"Could not connect to the database: {e}")
-#         return None
+def get_connection():
+    try:
+        conn = psycopg2.connect(conn_string)
+        st.write("connection established")
+        return conn
+    except OperationalError as e:
+        st.error(f"Could not connect to the database: {e}")
+        return None
 
-# conn = get_connection()
+conn = get_connection()
 
 # Insert data into the table
 # def insert_data(package_id, app_name, female_centric):
